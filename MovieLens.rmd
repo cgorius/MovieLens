@@ -1,0 +1,235 @@
+---
+title: "MovieLens"
+author: "CG"
+date: "May 8, 2019"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Overview
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# Create edx set, validation set, and submission file
+#############################################################
+## Section provided by course
+# Note: this process could take a couple of minutes
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+ratings <- read.table(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))), col.names = c("userId", "movieId", "rating", "timestamp"))
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId], title = as.character(title), genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+# Validation set will be 10% of MovieLens data
+set.seed(1)
+index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-index,]
+temp <- movielens[index,]
+# Make sure userId and movieId in validation set are also in edx set
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+# Add rows removed from validation set back into edx set
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+# Separates edx set into train and test sets
+set.seed(1)
+edx_test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+edx_train <- edx[-edx_test_index,]
+edx_test <- edx[edx_test_index,]
+#Confirm movieId and userId in edx_test are also in edx_trian, then add removed movieId to edx_train
+edx_test <- edx_test %>% 
+  semi_join(edx_train, by = "movieId") %>%
+  semi_join(edx_train, by = "userId")
+removed <- edx_test %>% 
+  anti_join(edx_train, by = "movieId")
+edx_train <- rbind(edx_train, removed)
+```
+###Introduction
+  This project aims to utilize the data analysis and machine learning skills taught throughout the HarvardX Data Science Certificate courses. Data analysis and manipulation methods are used to organize and gain a better understanding of the data.  Various models were created in order to predict the data by computing effect variables. In addition to this a Regularized Model was used on one of the effect models to observe a possible improvement in the model's Root Mean Squared Error value against it's predictions with an optimized lambda value. 
+
+###Project Description
+  The goal of this project is to develop a movie recommendation system for individual users based on previous movie ratings. The recommendation model should utilize the variable effects present in the data in order to improve its ability to predict user preferences towards other films. Significant data exploration provides an improved general understanding of patterns within the data prior to the effects model creation. Consideration of the effects of each variable helped determined those that would be used to create the recommendation model. Understanding that, though recorded, the 'timestamp' variable will not be as valuable as the 'genres' variable since users often favor specific genres and not timestamp value is important when building the model in order to eliminate unnecessary factors in the final model. It is also valuable to understand that though 'title and 'movieId' are separate variables they can technically be thought of as the same variable. Each movie has one title and one movieId, therefore using both variables in the recommendation model would be pointless. The models developed are being assessed by their root mean squared errors against the validations or test sets of data. The root mean squared error is the standard deviation of prediction errors between the model and the validation or test sets actual values. This project aims to produce a RMSE of less than or equal to 0.8775 when using the final model against the validation set of data.
+
+###Dataset
+The data set used to determine the optimal recommendation model, the "edx set"  was ninety percent of a whole data set. The other ten percent of data was saved as a "validation set" to be used with the optimal model determined. The edx data set contains 8000071 total observations of 6 variables. This means that there are 8000071 total recorded movie ratings in the edx set. The validation set therefore contains about just under nine hundred thousand recorded movie ratings.  
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+str(edx)
+```
+When observing the summary of the edx data set below it should be noted that the userId and movieId distributions values are not actually that valuable. Since each serves as identifiers and therefore without numerical value effect. The rating distribution variables are important however. It should be noted that the rating mean is a 3.5, an entire 1.0 higher than the actual average between the possible 0 and 5 rating range. The title and genres variable length does not refer to the number of unique occurrences in those variables, but simply number of occurrences. That also tells us those variables do not have missing values within the data set. 
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+summary(edx)
+```
+The figure on the right first shows that there are a total of 69878 individual users and 10677 unique movies within the edx data set. Below that demonstrates the number of occurrences of each rating value out of the total 8000071 recorded ratings. It can be seen that the top 4 rating values are all three or greater, which accounts for the higher value observed for the rating mean. 
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+edx %>%
+  summarise(n_users = n_distinct(userId), n_movies = n_distinct(movieId)) %>%
+  print.data.frame()
+edx %>% count(rating) %>% arrange(desc(n))
+```
+
+##Methods and Analysis
+###Data Analysis and Manipulation
+As described earlier the entire data source was divided into the edx data set with 90 percent being 8000071 rating observations and the validation data set with ten percent being about just under nine hundred thousand rating observations. The project aims to determine the best model for use against the validation set to produce the best or lowest RMSE value. Whether or not the model is capable of this will be observed by first determine the best model by separating the edx data set into its own test and train data sets. This allows the model to be compared against a training set twice. The models are tested within the edx data set in order to determine the optimal one before being applied to the validation set to observe the actual model success.  Below the distribution of the rating values, which was observed earlier, can be seen in order to visually interpret the data better. It is clear the observations are skewed to the right towards the higher rating values. From there it can be seen how that distribution of rating values effects the average rating of all the movies. The graph below on the right demonstrates the average movie rating is shaped as a normal distribution with a 3.5 average rating value.
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+edx %>%
+  ggplot(aes(rating)) +
+  geom_histogram(binwidth = 0.5, color = "black", fill = "blue") +
+  scale_x_discrete(limits = c(seq(0.5,5,0.5))) +
+  scale_y_continuous(breaks = c(seq(0, 3000000, 500000))) +
+  ggtitle("Rating distribution")
+edx %>% 
+  group_by(userId) %>% 
+  filter(n() >= 100) %>%
+  summarise(mean_rating = mean(rating)) %>% 
+  ggplot(aes(mean_rating)) + 
+  geom_histogram(bins = 30, color = "black", fill = "blue") +
+  xlab("Mean movie rating") +
+  ylab("Number of users") +
+  ggtitle("Mean movie rating per user") +
+  scale_x_discrete(limits = c(seq(0.5,5,0.5)))
+```
+The graphs below observe the distributions of the number of ratings per user as well as per movie. The ratings per user graph shows that most users only rate less than a hundred movies. With the highest quantities below fifty, this means the recommendation system will have to work with fewer observations in most user cases in order to predict user rating values. Lesser observations means the model has less to go off of and often results in larger variability. Though the graph on the right could appear somewhat normal, the increments on the x-axis should be noted. In reality most movies receive fifty to five hundred ratings. Some films boast over ten thousand ratings. This again means the model often has less to work with when determining the effect of specific movies on the recommendation model.
+
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+edx %>% count(userId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black", fill = "blue") + 
+  scale_x_log10() + 
+  xlab("Number of ratings") +
+  ylab("Number of users") +
+  ggtitle("Number of ratings per user")
+edx %>% 
+  count(movieId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black", fill = "blue") + 
+  xlab("Number of ratings") +
+  ylab("Movie count") +
+  scale_x_log10() + 
+  ggtitle("Number of ratings per movie")
+```
+
+###Modeling Approaches
+```{r setup, echo=TRUE, warning=FALSE, error=FALSE, message=FALSE}
+RMSE <- function(valid_set, pred_set){
+  sqrt(mean((valid_set - pred_set)^2))}
+```
+The recommendation system model aimed to use various variable effects to help predict a users rating of a film. The model begins be first using the average movie rating value as the prediction model as a base rating estimate. From there the model determines the effect each movie could have on its predicted rating. This is done by calculating the individual movieId average ratings and finding it's difference with the overall movie rating average in order to determine the movie effect value. This process is then performed again but with the userId. User's often demonstrate rating patterns, the user effect value is determined by grouping average ratings by userId and subtracting the overall average movie rating as well as that films specific movie effect rating. This process is performed one final time to improve the model with factors via the genres variable. The data is grouped by genre categories and the average ratings are determined, from there the overall film rating average as well as the observation's specific user and movie effects are subtracted in order to determine the genre effect value. In each case the model saw an improvement or a decrease in the model's RMSE value between the edx training set and the edx test set with the addition or a variable effect. One common factor of error when developing prediction models is overfitting. In order to avoid this regularization was performed on the Movie + User Effect Model. In order to prevent the model from attempting too hard to acknowledge all of the data and focus on the major patterns Regularization applies a lambda penalty to each effect factor. This process is repeated numerous times with a sequence of lambdas in order to determine the optimal lambda which produces the lowest RMSE value. The graph below demonstrates the RMSE versus lambda graph. The graph is concave up parabola with a vertex RMSE value of 5. Meaning the lambda value that produces the lowest RMSE value is 5.
+
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+########################Average
+###############################
+mu <- mean(edx_train$rating)
+naive_rmse <- RMSE(edx_test$rating, mu)
+predictions <- rep(2.5, nrow(edx_test))
+RMSE(edx_test$rating, predictions)
+
+rmse_results <- data_frame(method = "Average", RMSE = naive_rmse)
+#################################Movie Effect
+##########################################
+mu <- mean(edx_train$rating)
+movie_avgs <- edx_train %>%
+  group_by(movieId) %>%
+  summarize(bi = mean(rating - mu))
+
+predicted_ratings <- mu + edx_test %>%
+  left_join(movie_avgs, by = 'movieId') %>%
+  .$bi
+model1_rmse <- RMSE(predicted_ratings, edx_test$rating)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method = "Movie Effect Model",
+                                     RMSE = model1_rmse))
+####################################Movie and User Effect
+#########################################################
+user_avgs <- edx_train %>%
+  left_join(movie_avgs, by = 'movieId') %>%
+  group_by(userId) %>%
+  summarize(bu = mean(rating - mu - bi))
+
+predicted_ratings <- edx_test %>%
+  left_join(movie_avgs, by = 'movieId') %>%
+  left_join(user_avgs, by = 'userId') %>%
+  mutate(pred = mu + bi + bu) %>%
+  .$pred
+model2_rmse <- RMSE(predicted_ratings, edx_test$rating)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method = "Movie + User Effects Model",
+                                     RMSE = model2_rmse))
+####################################Movie + User + Genre Effect
+#########################################################
+gen_avgs <- edx_train %>%
+  left_join(movie_avgs, by = 'movieId') %>%
+  left_join(user_avgs, by = 'userId') %>%
+  group_by(genres) %>%
+  summarize(bg = mean(rating - mu - bi - bu))
+
+predicted_ratings <- edx_test %>%
+  left_join(movie_avgs, by = 'movieId') %>%
+  left_join(user_avgs, by = 'userId') %>%
+  left_join(gen_avgs, by = 'genres') %>%
+  mutate(pred = mu + bi + bu + bg) %>%
+  .$pred
+model22_rmse <- RMSE(predicted_ratings, edx_test$rating)
+rmse_results <- bind_rows(rmse_results,
+                          data_frame(method = "Movie + User + Genre Effects Model",
+                                     RMSE = model22_rmse))
+########################################## Regularized Movie and User
+#############################################################################
+
+lambdas <- seq(0, 10, 0.25)
+
+rmses <- sapply(lambdas, function(l){
+  mu <- mean(edx_train$rating)
+  bi <- edx_train %>% 
+    group_by(movieId) %>%
+    summarise(bi = sum(rating - mu)/(n()+l))
+    
+  bu <- edx_train %>% 
+    left_join(bi, by="movieId") %>%
+    group_by(userId) %>%
+    summarise(bu = sum(rating - bi - mu)/(n()+l))
+  
+  predicted_ratings <- 
+    edx_test %>% 
+    left_join(bi, by = "movieId") %>%
+    left_join(bu, by = "userId") %>%
+    mutate(pred = mu + bi + bu) %>%
+    .$pred
+  return(RMSE(predicted_ratings, edx_test$rating))
+})
+```
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+qplot(lambdas, rmses)
+```
+##Results
+The table below demonstrates the RMSE value of each model developed versus either the edx test data set or the validation data set. For the first four observations it is obvious to see how the addition of a variable effect on the model to the rating average improved the RMSE value consistently. One interesting observation is that the regularized movie and user effect model produced a lower RMSE than the model with movie, user, and genre effects. Since that model with three variable effects has a lower RMSE than the one with two we can conclude that the third variable did improve the model and not worsen it overall with overfitting. The results of the regularized model with variables suggest that the regularized three variable model would produce an even lower RMSE value against the edx test, a likely next step.
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+rmse_results <- bind_rows(rmse_results, data_frame(method="Regularized Movie + User Effect Model - test dataset",  RMSE = min(rmses)))
+##################################################################################################################################################
+###############  Model Against the Validation Set
+##################################################################################################################################################
+# Calculate movie effect with lambda penalty
+b_i <- edx %>% group_by(movieId) %>% summarise(b_i = sum(rating - mu)/(n()+lambda))
+# Calculate user effect with lambda penalty
+b_u <- edx %>% left_join(b_i, by="movieId") %>% group_by(userId) %>% summarise(b_u = sum(rating - b_i - mu)/(n()+lambda))
+#Validation set prediction ratings
+predicted_ratings <- validation %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% mutate(pred = mu + b_i + b_u) %>% .$pred
+# RMSE
+validation_rmse <- RMSE(predicted_ratings, validation$rating)
+# Append the results
+rmse_results <- bind_rows(rmse_results,data_frame(method = "Regularized Movie + User Effect Model - Validation dataset",RMSE = validation_rmse))
+rmse_results %>% knitr::kable()
+```
+In the end it was the regularized movie and user effect model that produced the lowest RMSE value against the edx test data set. That model was then applied to the validation set, the original ten percent of the data available at the start of the project. When applied here the model produced an RMSE of 0.8648. This value though higher than the one produced against the edx test set met the project goal of being less than or equal to 0.8775
+
+##Conclusion
+  In conclusion the model accomplished the set goal of obtaining a RMSE value less than or equal to 0.8775 with a value of 0.86848. The visualization of the data provided increased understanding of likely variable effects as well obstacles that ay have been faced in analysis and model training. The different models produced demonstrated the valuable effect of increased number variable effects (within the zero to three range). In addition to that the project demonstrates how overfitting can affect a model's success and that regularization can force a model with less variables to be more accurate. This case specifically points to the model which produced the lowest RMSE value against the edx test data set and met the RMSE goal against the validation test set, the regularized movie and user effect model. 
+ 
